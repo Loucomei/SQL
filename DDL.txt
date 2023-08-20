@@ -1,0 +1,136 @@
+CREATE SCHEMA cca;
+SET search_path to cca,public;
+
+-- Tables --
+
+-- LeadCustomer table --
+
+CREATE TABLE leadcustomer 
+(
+	customerid integer NOT NULL,
+	firstname character varying(20) NOT NULL,
+	surname character varying(40) NOT NULL,
+	billingaddress character varying(200) NOT NULL,
+	email character varying(30) NOT NULL,
+	CONSTRAINT leadcustomer_pkey PRIMARY KEY (customerid)
+);
+
+-- Passenger table --
+
+CREATE TABLE passenger 
+(
+	passengerid integer NOT NULL,
+	firstname character varying(20) NOT NULL UNIQUE,
+	surname character varying(40) NOT NULL,
+	passportno character varying(30) NOT NULL, 
+	nationality character varying(30) NOT NULL,
+	dob DATE NOT NULL
+	CONSTRAINT passenger_pkey PRIMARY KEY (passengerid) 
+);
+
+-- Flight table --
+
+CREATE TABLE flight 
+(
+flightid integer NOT NULL,
+flightdate timestamp NOT NULL,
+origin character varying(30) NOT NULL, 
+destination character varying(30) NOT NULL,
+maxcapacity integer NOT NULL,
+priceperseat numeric NOT NULL,
+CONSTRAINT flight_pkey PRIMARY KEY (flightid)
+);
+
+
+
+ -- FlightBooking table --
+
+CREATE TABLE flightbooking 
+(
+bookingid integer NOT NULL,
+customerid integer NOT NULL,
+flightid integer NOT NULL,
+numseats integer NOT NULL,
+status CHAR(1) NOT NULL,
+bookingtime timestamp NOT NULL,
+totalcost DECIMAL CHECK (totalcost>=0),
+CONSTRAINT flightbooking_pkey PRIMARY KEY (bookingid), 
+CONSTRAINT flightbooking_customerid_fkey FOREIGN KEY (customerid) 
+REFERENCES cca.leadcustomer
+ON UPDATE CASCADE
+ON DELETE RESTRICT,
+CONSTRAINT flightbooking_flightid_fkey FOREIGN KEY (flightid) 
+REFERENCES cca.flight
+ON UPDATE CASCADE
+ON DELETE RESTRICT
+);
+
+-- SeatBooking table --
+
+CREATE TABLE seatbooking 
+(
+bookingid integer NOT NULL,
+passengerid integer NOT NULL,
+seatnumber character(4) NOT NULL,
+CONSTRAINT seatbooking_pkey PRIMARY KEY (bookingid, passengerid),
+CONSTRAINT seatbooking_bookingid_fkey FOREIGN KEY (bookingid) 
+REFERENCES cca.flightbooking
+ON UPDATE CASCADE
+ON DELETE RESTRICT,
+CONSTRAINT seatbooking_passengerid_fkey FOREIGN KEY (passengerid) 
+REFERENCES cca.passenger
+ON UPDATE CASCADE
+ON DELETE RESTRICT
+);
+
+-- Grant statments to make the database public -- 
+
+GRANT SELECT ON flight TO PUBLIC;
+ GRANT SELECT ON flightbooking TO PUBLIC; 
+GRANT SELECT ON leadcustomer TO PUBLIC; 
+GRANT SELECT ON passenger TO PUBLIC; 
+GRANT SELECT ON seatbooking TO PUBLIC;
+
+-- Indexes for foreign keys --
+
+CREATE INDEX flightbooking_flightid_fkey ON flightbooking (flightid);
+CREATE INDEX flightbooking_customerid_fkey ON flightbooking (customerid); 
+CREATE INDEX seatbooking_passengerid_fkey ON seatbooking (passengerid); 
+CREATE INDEX seatbooking_bookingid_fkey ON seatbooking (bookingid);
+
+-- Domain to set the R and C status --
+
+CREATE DOMAIN TypeOfTheStatus AS VARCHAR (1) 
+CHECK (VALUE IN ('R' , 'C'));
+
+-- Trigger function to update the maxCapacity on Reserved --
+
+CREATE OR REPLACE FUNCTION update_maxcap_R() 
+RETURNS trigger AS $minCap$ BEGIN
+UPDATE Flight
+SET MaxCapacity = MaxCapacity - NEW.numseats WHERE Flight.flightID = NEW.flightID;
+RETURN NEW;
+END; $minCap$ LANGUAGE plpgsql;
+
+CREATE TRIGGER R_flights AFTER INSERT ON flightbooking FOR EACH ROW
+execute procedure update_maxcap_R();
+
+-- Trigger function to update on Cancel --
+
+CREATE OR REPLACE FUNCTION update_maxcap() RETURNS trigger AS $maxCap$ BEGIN
+UPDATE Flight
+SET MaxCapacity = MaxCapacity + NEW.numseats WHERE Flight.flightID = NEW.flightID;
+RETURN NEW;
+END; $maxCap$ LANGUAGE plpgsql;
+
+CREATE TRIGGER cancelled_flights AFTER UPDATE ON flightbooking FOR EACH ROW
+execute procedure update_maxcap();
+
+-- View to show total spendings and bookings of customers --
+
+CREATE OR REPLACE VIEW ranked_list AS
+SELECT leadcustomer.customerid,firstname, surname, COUNT(bookingID) AS
+total_number_of_bookings , SUM(totalcost) AS total_spend FROM flightbooking
+RIGHT JOIN leadcustomer
+ON leadcustomer.customerid= flightbooking.customerid WHERE leadcustomer.customerid = flightbooking.customerid
+GROUP BY leadcustomer.customerid ORDER BY total_spend DESC;
